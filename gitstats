@@ -1208,7 +1208,7 @@ class HTMLReportCreator(ReportCreator):
 			fg.close()
 
 		f.write('</dl>')
-		f.write('<script type="text/javascript" src="../toggle.js"></script>')
+		f.write('<script type="text/javascript" src="toggle.js"></script>')
 		f.write('</body></html>')
 		f.close()
 
