@@ -2,6 +2,7 @@
 # Copyright (c) 2007-2014 Heikki Hokkanen <hoxu@users.sf.net> & others (see doc/AUTHOR)
 # GPLv2 / GPLv3
 import datetime
+import errno
 import getopt
 import glob
 import os
@@ -47,7 +48,10 @@ conf = {
 	'linear_linestats': 1,
 	'project_name': '',
 	'processes': 8,
-	'start_date': ''
+	'start_date': '',
+	'period_type': 'w',
+	'all_branches': True,
+	'min_commit_number': 20
 }
 
 def getpipeoutput(cmds, quiet = False):
@@ -185,7 +189,10 @@ class DataCollector:
 		# tags
 		self.tags = {}
 
+		# files
 		self.files_by_stamp = {} # stamp -> files
+		self.commits_per_file = []
+		self.history_per_file = {}
 
 		# extensions
 		self.extensions = {} # extension -> files, lines
@@ -252,6 +259,15 @@ class DataCollector:
 		return self.stamp_created
 	
 	def getTags(self):
+		return []
+
+	def getCommitsPerFile(self):
+		return []
+
+	def getHistoryPerFile(self, file_name):
+		return []
+
+	def setHistoryPerFile(self, file_name):
 		return []
 	
 	def getTotalAuthors(self):
@@ -582,6 +598,54 @@ class GitDataCollector(DataCollector):
 				#self.changes_by_date[stamp] = { 'files': files, 'ins': inserted, 'del': deleted }
 		self.total_lines += total_lines
 
+		# Collect data about number of commits per each file, if the number is > than 20
+		lines = getpipeoutput(['git log --name-only --pretty=format:', 'sort', 'uniq -c', 'sort -nr'])
+		first_line = True
+		split = 0
+		for line in lines.split('\n'):
+
+			if len(line) == 0:
+				continue
+
+			if first_line:
+				first_line = False
+				split = len(line)
+				continue
+
+			num_of_commits = int(line[:split])
+			if num_of_commits < conf['min_commit_number']:
+				break
+
+			file_name = line[split:]
+			self.commits_per_file.append((num_of_commits, file_name))
+
+		start_date = self.getFirstCommitDate()
+		if conf['start_date'] != '':
+			start_date = datetime.strptime(conf['start_date'], '%Y-%m-%d')
+
+		period_type = conf['period_type']
+		number = 0
+		period_length = self.getLastCommitDate() - start_date
+		if period_type == 'd':
+			number = period_length.days
+		if period_type == 'w':
+			number = period_length.days // 7
+		if period_type == 'm':
+			number = period_length.days // 30
+		if period_type == 'y':
+			number = period_length.days // 365
+
+		all_branches = '' if conf['all_branches'] else '--not-all'
+
+		# Collect history for each file
+		for cxf in self.commits_per_file:
+			file_name = cxf[1]
+			history = self.setHistoryPerFile(file_name)
+			lines = getpipeoutput(['git-count -t %s -p %s -n %d %s' % (file_name, period_type, number, all_branches)])
+			for line in lines.split('\n'):
+				history.append(line.split('\t'))
+
+
 		# Per-author statistics
 
 		# defined for stamp, author only if author commited at this timestamp.
@@ -689,6 +753,16 @@ class GitDataCollector(DataCollector):
 	def getTags(self):
 		lines = getpipeoutput(['git show-ref --tags', 'cut -d/ -f3'])
 		return lines.split('\n')
+
+	def getCommitsPerFile(self):
+		return self.commits_per_file
+
+	def getHistoryPerFile(self, file_name):
+		return self.history_per_file[hash(file_name)]
+
+	def setHistoryPerFile(self, file_name):
+		self.history_per_file[hash(file_name)] = []
+		return self.getHistoryPerFile(file_name)
 	
 	def getTagDate(self, tag):
 		return self.revToDate('tags/' + tag)
@@ -737,7 +811,7 @@ class HTMLReportCreator(ReportCreator):
 		binarypath = os.path.dirname(os.path.abspath(__file__))
 		secondarypath = os.path.join(binarypath, '..', 'share', 'gitstats')
 		basedirs = [binarypath, secondarypath, '/usr/share/gitstats']
-		for file in (conf['style'], 'sortable.js', 'arrow-up.gif', 'arrow-down.gif', 'arrow-none.gif'):
+		for file in (conf['style'], 'sortable.js', 'toggle.js', 'arrow-up.gif', 'arrow-down.gif', 'arrow-none.gif'):
 			for base in basedirs:
 				src = base + '/' + file
 				if os.path.exists(src):
@@ -1112,6 +1186,29 @@ class HTMLReportCreator(ReportCreator):
 			f.write('<tr><td>%s</td><td>%d (%.2f%%)</td><td>%d (%.2f%%)</td><td>%d</td></tr>' % (ext, files, (100.0 * files) / data.getTotalFiles(), lines, loc_percentage, lines / files))
 		f.write('</table>')
 
+		# Files :: Commit history
+		try:
+			os.makedirs(path + '/files')
+		except OSError as exc:  # Guard against race condition
+			if exc.errno != errno.EEXIST:
+				raise
+		f.write(html_header(2, 'Files History'))
+		f.write('<dl>')
+		for cxf in data.getCommitsPerFile():
+			file_name = cxf[1]
+			num_of_commits = cxf[0]
+			f.write('<div class="toggle" onclick="toggleImage(this)"><dt>%d - %s</dt>' % (num_of_commits, file_name))
+			f.write('<dd>')
+			f.write('<img src="files/%s.png" alt="%s">' % (hash(file_name), file_name))
+			f.write('</dd></div>')
+
+			fg = open(path + '/files/' + str(hash(file_name)) + '.dat', 'w')
+			for history_line in data.getHistoryPerFile(file_name):
+				fg.write('%s %s\n' % (history_line[0], history_line[1]))
+			fg.close()
+
+		f.write('</dl>')
+		f.write('<script type="text/javascript" src="../toggle.js"></script>')
 		f.write('</body></html>')
 		f.close()
 
@@ -1288,6 +1385,27 @@ plot 'files_by_date.dat' using 1:2 w steps
 """)
 		f.close()
 
+		# Files history
+		for cxf in self.data.getCommitsPerFile():
+			file_name = cxf[1]
+			f = open(path + '/files/' + str(hash(file_name)) + '.plot', 'w')
+			f.write(GNUPLOT_COMMON)
+			f.write("set output '%s.png'" % (hash(file_name)))
+			f.write(
+				"""
+				unset key
+				set yrange [0:]
+				set xdata time
+				set timefmt "%Y-%m-%d"
+				set format x "%Y-%m-%d"
+				set grid y
+				set xtics rotate
+				set ytics autofreq
+				set bmargin 6
+				""")
+			f.write("plot '%s.dat' using 1:2 w steps" % (hash(file_name)))
+			f.close()
+
 		# Lines of Code
 		f = open(path + '/lines_of_code.plot', 'w')
 		f.write(GNUPLOT_COMMON)
@@ -1365,6 +1483,13 @@ plot """
 
 		f.close()
 
+		os.chdir(path + '/files')
+		files = glob.glob(path + '/files/*.plot')
+		for f in files:
+			out = getpipeoutput([gnuplot_cmd + ' "%s"' % f])
+			if len(out) > 0:
+				print out
+
 		os.chdir(path)
 		files = glob.glob(path + '/*.plot')
 		for f in files:
@@ -1422,7 +1547,9 @@ class GitStats:
 				key, value = v.split('=', 1)
 				if key not in conf:
 					raise KeyError('no such key "%s" in config' % key)
-				if isinstance(conf[key], int):
+				if key == 'all_branches':
+					conf[key] = False if (value == 'False' or value == 'false') else True
+				elif isinstance(conf[key], int):
 					conf[key] = int(value)
 				else:
 					conf[key] = value
