@@ -143,3 +143,26 @@ h2 a {
 .moreauthors {
 	font-size: 80%;
 }
+
+.toggle {
+    cursor: pointer;
+}
+
+.toggle dt {
+    float: none;
+    cursor: pointer;
+    padding-bottom: 10px;
+    padding-top: 20px;
+}
+
+.toggle dt:after {
+	content: none;
+}
+
+.toggle dd {
+    display: none;
+}
+
+.toggle dd.show {
+    display: block;
+}
