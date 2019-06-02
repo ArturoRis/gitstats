@@ -914,13 +914,6 @@ class HTMLReportCreator(ReportCreator):
 				f.write('<td>0.00</td>')
 		f.write('</tr></table>')
 		f.write('<img src="hour_of_day.png" alt="Hour of Day">')
-		fg = open(path + '/hour_of_day.dat', 'w')
-		for i in range(0, 24):
-			if i in hour_of_day:
-				fg.write('%d %d\n' % (i + 1, hour_of_day[i]))
-			else:
-				fg.write('%d 0\n' % (i + 1))
-		fg.close()
 
 		# Day of Week
 		f.write(html_header(2, 'Day of Week'))
@@ -1274,7 +1267,7 @@ class HTMLReportCreator(ReportCreator):
 """
 set output 'hour_of_day.png'
 unset key
-set xrange [0.5:24.5]
+set xrange [-0.5:23.5]
 set yrange [0:]
 set xtics 4
 set grid y
