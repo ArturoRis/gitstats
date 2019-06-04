@@ -51,12 +51,21 @@ conf = {
 	'start_date': '',
 	'period_type': 'w',
 	'all_branches': True,
-	'min_commit_number': 20
+	'min_commit_number': 20,
+	'exclude': ''
 }
+
+def checkGitCmd(cmd):
+	exclude = conf['exclude']
+	if exclude and (cmd.startswith('git log') or cmd.startswith('git rev-list')):
+		cmd += ' -- . ":(exclude)' + exclude + '"'
+	return cmd
 
 def getpipeoutput(cmds, quiet = False):
 	global exectime_external
 	start = time.time()
+	for i in range(0, len(cmds)):
+		cmds[i] = checkGitCmd(cmds[i])
 	if not quiet and ON_LINUX and os.isatty(1):
 		print '>> ' + ' | '.join(cmds),
 		sys.stdout.flush()
@@ -128,7 +137,12 @@ def getnumoffilesfromrev(time_rev):
 	Get number of files changed in commit
 	"""
 	time, rev = time_rev
-	return (int(time), rev, int(getpipeoutput(['git ls-tree -r --name-only "%s"' % rev, 'wc -l']).split('\n')[0]))
+	cmds = ['git ls-tree -r --name-only "%s"' % rev]
+	exclude = conf['exclude']
+	if exclude:
+		cmds.append('grep -v ' + exclude)
+	cmds.append('wc -l')
+	return (int(time), rev, int(getpipeoutput(cmds).split('\n')[0]))
 
 def getnumoflinesinblob(ext_blob):
 	"""
@@ -505,6 +519,10 @@ class GitDataCollector(DataCollector):
 			blob_id = parts[2]
 			size = int(parts[3])
 			fullpath = parts[4]
+
+			exclude = conf['exclude']
+			if exclude and fullpath.startswith(exclude):
+				continue
 
 			self.total_size += size
 			self.total_files += 1
